@@ -1,0 +1,129 @@
+---
+title: "Milestone Report"
+author: "Mark Edney"
+date: "20/02/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, cache = TRUE)
+```
+
+## Obejective
+The objective of this milestone report is to outline the steps for data analysis
+for the Capstone project for the data science course on Coursera by John Hopkins
+University. 
+
+The Project is to create a text predicting algorithm based on a Corpus created from
+three different data sets.
+
+## Initialization
+
+The following code load the required libraries and download the data.
+
+```{r inital}
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+
+url <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+if(dir.exists("~/R/Capestone/data/") == FALSE){
+       dir.create("~/R/Capestone/data/")}
+if(file.exists("~/R/Capestone/data/data.zip") == FALSE){
+        download.file(url,destfile = "~/R/Capestone/data/data.zip")
+        setwd("~/R/Capestone/data/")
+        unzip("~/R/Capestone/data/data.zip")
+        setwd("~/R/Capestone")
+        }
+```
+
+With the files downloaded, they can now be read and stored in memory. 
+
+```{r read}
+blog <- readLines("~/R/Capestone/data/final/en_US/en_US.blogs.txt")
+news <- readLines("~/R/Capestone/data/final/en_US/en_US.news.txt")
+twitter <- readLines("~/R/Capestone/data/final/en_US/en_US.twitter.txt")
+blog <- data.frame(line = 1 : length(blog), text = blog)
+news <- data.frame(line = 1 : length(news), text = news)
+twitter <- data.frame(line = 1 : length(twitter), text = twitter)
+```
+
+## Data Analysis
+
+The first step is to tokenise the data which will make it easier to analyze. This 
+is easy to achieve with the unnest_tokens function in the tidytext library within
+the tidyverse library. The profanity filter could be applied now but it takes a long
+time to do over the entire dataset. It is better to use it on a sample instead. 
+
+```{r tolken}
+Tblog <- unnest_tokens(blog, input = text,, output = word, format = "text",
+              token = "words", drop = TRUE, to_lower = TRUE)
+Tnews <- unnest_tokens(news, input = text,, output = word, format = "text",
+                       token = "words", drop = TRUE, to_lower = TRUE)
+Ttwitter <- unnest_tokens(twitter, input = text,, output = word, format = "text",
+                       token = "words", drop = TRUE, to_lower = TRUE)
+```
+
+The Count function in the Dplyr library can also be useful for determine the count
+for each unique word. 
+
+```{r count}
+Cblog <- count(Tblog, word)
+Cnews <- count(Tnews, word)
+Ctwitter <- count(Ttwitter, word)
+```
+
+The following code is used to determine some useful statistics for each source 
+in a table
+
+```{r table}
+Table1 <- data.frame(Source = c("Blog", "News", "Twitter"))
+Table1$Lines <- c(nrow(blog), nrow(news), nrow(twitter))
+Tablelist <- list(Cblog$n,Cnews$n, Ctwitter$n)
+Table1$Count <- lapply(Tablelist, sum)
+Table1$Unique <- lapply(Tablelist, length)
+Table1$"Words per line" <- round(as.numeric(Table1$Count)/Table1$Lines,1)
+Table1$"% unique" <- round(as.numeric(Table1$Unique)/as.numeric(Table1$Count)*100,1)
+```
+
+It is helpful to look at the top ten used words for each source.
+
+```{r top10}
+topblog <- Cblog %>% arrange(desc(n)) %>% filter(row_number() < 11)
+topnews <- Cnews %>% arrange(desc(n)) %>% filter(row_number() < 11)
+toptwitter <- Ctwitter %>% arrange(desc(n)) %>% 
+        filter(row_number() < 11)
+```
+
+The top ten results can be represented in a bar graph with the following code:
+```{r graph}
+Datasum <- data.frame(Source = c(rep("Blog",10), rep("News",10), rep("Twitter",10))
+                      ,Word = c (topblog$word, topnews$word, toptwitter$word),
+                      Count = c (topblog$n, topnews$n, toptwitter$n))
+g <- ggplot(Datasum, aes(x= Word, y = Count)) + geom_bar(stat = "identity") + 
+        aes(fill=Source) + labs(title = "Top 10 word counts by source") 
+```
+
+
+## Results
+
+The previously generated table that expresses statistics on the different data sets
+can be found here:
+```{r table2, echo=FALSE}
+Table1
+```
+
+The plot of the top ten results by source is here:
+```{r graph2, echo=FALSE}
+g
+```
+
+## Conclusion
+
+From the summary table it is clear the largest data sets are from twitter and from blogs
+ in terms of the number of lines and the number of words. The news set may be the smallest 
+ but it has the highest percent of unique words. It is no surprising that the twitter set
+ has the lest number of words per line. In terms of the top ten words, it is clear that 
+ there is a large number of overlap between each set as all the top ten words are included
+ in a list of 13 words. The words themselves seem to be the most common words in the 
+ English language. 
