@@ -22,15 +22,18 @@ library(pryr)
 url <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
 url2 <- "https://www.freewebheaders.com/download/files/facebook-bad-words-list_comma-separated-text-file_2021_01_18.zip"
 url3 <- "https://raw.githubusercontent.com/dwyl/english-words/master/words_alpha.txt"
+url4 <- "https://raw.githubusercontent.com/mark-edney/Capestone/1c143b40dd71f0564c3248df2a8638d08af10440/data/contractions.txt"
 if(dir.exists("~/R/Capestone/data/") == FALSE){
        dir.create("~/R/Capestone/data/")}
 
 if(file.exists("~/R/Capestone/data/data.zip") == FALSE|
    file.exists("~/R/Capestone/data/prof.zip")==FALSE|
-   file.exists("~/R/Capestone/data/diction.txt")==FALSE){
+   file.exists("~/R/Capestone/data/diction.txt")==FALSE|
+    file.exists("~/R/Capestone/data/contractions.txt")==FALSE){
         download.file(url,destfile = "~/R/Capestone/data/data.zip")
         download.file(url2,destfile = "~/R/Capestone/data/prof.zip")
         download.file(url3,destfile = "~/R/Capestone/data/diction.txt")
+        download.file(url4,destfile = "~/R/Capestone/data/contractions.txt")
         setwd("~/R/Capestone/data/")
         unzip("~/R/Capestone/data/prof.zip")
         unzip("~/R/Capestone/data/data.zip")
@@ -68,6 +71,9 @@ prof <- tibble("word" = prof)
 
 english <- read_lines("~/R/Capestone/data/diction.txt")
 english <- tibble("word" = english[!english==""])
+
+contract <- read_lines("~/R/Capestone/data/contractions.txt")
+contract <- tibble("word" = contract)
 ```
 
 ## Vocabulary 
@@ -76,12 +82,13 @@ A vocabulary of words is created from the unique words with the applied filters.
 ```{r vocab}
 #clean up ram
 rm(blog,news,twitter)
-voc <- english %>% anti_join(prof)
+voc <- bind_rows(english, contract) %>% anti_join(prof)
+rm(contract, english, prof)
 
 unigram <- corpus %>% unnest_tokens(ngram, text, token = "ngrams", n = 1) %>%
         semi_join(voc, by = c("ngram"="word")) 
 #decreases the voc size
-voc <- tibble(word = unigram$ngram)
+voc <- tibble(word = unique(unigram$ngram))
 ```
 
 
@@ -106,37 +113,46 @@ but significantly to the time and memory requirement. This is mainly due to the
 filtering. 
 
 ```{r vocabclean}
-
 remove <- unigramcount %>%
         filter(n==1)
 unigram <- unigram[!unigram$ngram %in% remove$ngram,]
-voc <- tibble(word = unigram$ngram)
+voc <- tibble(word = unique(unigram$ngram))
+
+```
+
+The Corpus can reconstructed with the reduced vocabulary remove the need to re-filter
+for the biagrams and trigrams
+```{r corpusremake}
+corpus <- unigram %>%
+        group_by(line) %>%
+        summarise(line = paste(ngram, collapse = " ")) %>%
+        rename("text" = "line") %>%
+        mutate("line" = row_number())
+
+rm(unigramcount)        
+unigram <- unigram %>% count(ngram)
 ```
 ## Bigrams
 
 The bigrams are created and then split into individual words which can be filtered
 by the vocabulary list. 
 ```{r bigram}
-bigram <- corpus %>% unnest_tokens(ngram, text, token = "ngrams", n = 2) %>%
-        separate(ngram, c("word1", "word2"))
-bigram$word1[bigram$word1 %in% unk$ngram] <- "<unk>"
-bigram$word2[bigram$word2 %in% unk$ngram] <- "<unk>"
-bigram <- bigram %>% filter(word1 %in% voc$word, word2 %in% voc$word) %>%
-        count(word1, word2)
+bigram <- corpus %>% 
+        unnest_tokens(ngram, text, token = "ngrams", n = 2) %>%
+        separate(ngram, c("word1", "word2")) %>%
+        count(word1, word2) %>%
+        filter(!n==1)
 ```
 
 ## Trigrams
 
 Likewise, the trigrams are created in a similar manner
 ```{r trigrams}
-trigram <- corpus %>% unnest_tokens(ngram, text, token = "ngrams", n = 3) %>%
-        separate(ngram, c("word1", "word2", "word3"))
-trigram$word1[trigram$word1 %in% unk$ngram] <- "<unk>"
-trigram$word2[trigram$word2 %in% unk$ngram] <- "<unk>"
-trigram$word3[trigram$word3 %in% unk$ngram] <- "<unk>"
-trigram <- trigram %>% 
-        filter(word1 %in% voc$word, word2 %in% voc$word, word3 %in% voc$word) %>%
-        count(word1, word2, word3)
+trigram <- corpus %>% 
+        unnest_tokens(ngram, text, token = "ngrams", n = 3) %>%
+        separate(ngram, c("word1", "word2", "word3")) %>%
+        count(word1, word2, word3) %>%
+        filter(!n==1)
 ```
 
 ## Testing
@@ -161,7 +177,7 @@ w <- filter(input, line==1) %>%
         select(word) %>%
         slice_tail(n=2) %>%
         as.vector()
-w[!w$word %in% voc$word] <- "<unk>"
+w[!w$word %in% voc$word,] <- "<unk>"
 ```
 
 ## Modeling
