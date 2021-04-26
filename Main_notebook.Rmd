@@ -15,8 +15,7 @@ not all read on file.
 ```{r initial}
 library(tidyverse)
 library(tidytext)
-library(stopwords)
-
+library(pryr)
 
 #downloads the corpus files, profanity filter and English dictionary
 
@@ -73,12 +72,10 @@ english <- tibble("word" = english[!english==""])
 ## Vocabulary 
 
 A vocabulary of words is created from the unique words with the applied filters.
-It also includes the removal of stop words which are very common words that provide
-little value to predictive models. 
 ```{r vocab}
 #clean up ram
 rm(blog,news,twitter)
-voc <- english %>% anti_join(prof) %>% anti_join(stop_words)
+voc <- english %>% anti_join(prof)
 
 unigram <- corpus %>% unnest_tokens(ngram, text, token = "ngrams", n = 1) %>%
         semi_join(voc, by = c("ngram"="word")) 
@@ -120,8 +117,8 @@ by the vocabulary list.
 ```{r bigram}
 bigram <- corpus %>% unnest_tokens(ngram, text, token = "ngrams", n = 2) %>%
         separate(ngram, c("word1", "word2"))
-bigram$word1[bigram$word1 %in% unks$ngram] <- "<unk>"
-bigram$word2[bigram$word2 %in% unks$ngram] <- "<unk>"
+bigram$word1[bigram$word1 %in% unk$ngram] <- "<unk>"
+bigram$word2[bigram$word2 %in% unk$ngram] <- "<unk>"
 bigram <- bigram %>% filter(word1 %in% voc$word, word2 %in% voc$word) %>%
         count(word1, word2)
 ```
@@ -132,9 +129,9 @@ Likewise, the trigrams are created in a similar manner
 ```{r trigrams}
 trigram <- corpus %>% unnest_tokens(ngram, text, token = "ngrams", n = 3) %>%
         separate(ngram, c("word1", "word2", "word3"))
-trigram$word1[trigram$word1 %in% unks$ngram] <- "<unk>"
-trigram$word2[trigram$word2 %in% unks$ngram] <- "<unk>"
-trigram$word3[trigram$word3 %in% unks$ngram] <- "<unk>"
+trigram$word1[trigram$word1 %in% unk$ngram] <- "<unk>"
+trigram$word2[trigram$word2 %in% unk$ngram] <- "<unk>"
+trigram$word3[trigram$word3 %in% unk$ngram] <- "<unk>"
 trigram <- trigram %>% 
         filter(word1 %in% voc$word, word2 %in% voc$word, word3 %in% voc$word) %>%
         count(word1, word2, word3)
@@ -155,13 +152,14 @@ input <- tibble(text = c("When you breathe, I want to be the air for you. I'll b
                          "Every inch of you is perfect from the bottom to the",
                          "I’m thankful my childhood was filled with imagination and bruises from playing",
                          "I like how the same people are in almost all of Adam Sandler's")) %>%
-        mutate(line = row_number())
-input <- unnest_tokens(input, word, text)
-input <- split(input, input$line) 
+        mutate(line = row_number()) %>%
+        unnest_tokens(word, text)
 
-w <- vector(length = 3)
-w[1] <- input$'1'[nrow(input$'1')-1,]$word
-w[2] <- input$'1'[nrow(input$'1'),]$word
+w <- filter(input, line==1) %>%
+        select(word) %>%
+        slice_tail(n=2) %>%
+        as.vector()
+w[!w$word %in% voc$word] <- "<unk>"
 ```
 
 ## Modeling
@@ -169,7 +167,7 @@ In this section, the different models are examined
 
 ### Maximum Likliness Estimate (MLE)
 ```{r MLE}
-temp <- trigram %>% filter(word1 == w[1]) %>% filter(word2 == w[2])
+temp <- trigram %>% filter(word1 %in% w[1,], word2 %in% w[2,])
 MLEdf <- tibble(word=temp$word3, MLE=temp$n/sum(temp$n))
 dist <- left_join(dist, MLEdf)
 dist[is.na(dist$MLE),]$MLE <- 0
@@ -188,22 +186,22 @@ dist$ADD <- dist$ADD / sum(dist$ADD)
 ```{r GT}
 Nr <- count(temp, n) %>% add_row(n = 0, nn = 0)  %>% 
         arrange(n)
-Nr %<>% mutate(c= 0) %>% mutate(Gt = 0)
+Nr %<>% mutate(c= 0) %>% mutate(GT = 0)
 total <- sum(Nr$nn*Nr$n)
-Nr$Gt[Nr$n==0] <- Nr$nn[Nr$n==1] / total
+Nr$GT[Nr$n==0] <- Nr$nn[Nr$n==1] / total
 Nr$nn[Nr$n==0] <- nrow(dist) - total
 for (i in 2:nrow(Nr)) {
         Nr$c[i] <-  (Nr$n[i]+1)*Nr$nn[i+1]/Nr$nn[i]
         Nr$c[i][is.na(Nr$c[i])] <- 0
-        Nr$Gt[i] <-  Nr$c[i] / total
+        Nr$GT[i] <-  Nr$c[i] / total
 }
-Nr$Gt[Nr$n==max(Nr$n)] <- 1 - sum(Nr$Gt)
-Nr$Gt <- Nr$Gt/ Nr$nn
-Gt <- tibble(word=voc$word)
-Gt <- left_join(Gt, select(temp, word3, n), by = c("word" = "word3"))
-Gt$n[is.na(Gt$n)] <- 0 
-Gt <- left_join(Gt, select(Nr, n, Gt))
-dist <- left_join(dist, select(Gt, word, Gt))
+Nr$GT[Nr$n==max(Nr$n)] <- 1 - sum(Nr$GT)
+Nr$GT <- Nr$GT/ Nr$nn
+GT <- tibble(word=voc$word)
+GT <- left_join(GT, select(temp, word3, n), by = c("word" = "word3"))
+GT$n[is.na(GT$n)] <- 0 
+GT <- left_join(GT, select(Nr, n, GT))
+dist <- left_join(dist, select(GT, word, GT))
 ```
 
 ### Absolute Discounting
@@ -211,7 +209,7 @@ dist <- left_join(dist, select(Gt, word, Gt))
 ADdf <- voc %>% left_join(select(temp, word3, n), by = c("word" = "word3")) 
 ADdf$n[is.na(ADdf$n)] <- 0
 d <- 0.5
-temp2 <- trigram %>% filter(word1 == w[1]) %>% 
+temp2 <- trigram %>% filter(word1 == w[1,]) %>% 
         count(word3) %>% 
         mutate(p3 = n / sum(n))
 
@@ -227,7 +225,12 @@ ADdf <- mutate(ADdf, AD = p1+p2*p3)
 ## Results
 
 ```{r results}
-dist %>% summarise_at(c("MLE", "ADD", "Gt"), max)
+
+maxes <- dist %>% filter(!word == "<unk>") %>%
+        summarise_at(-1, which.max) %>%
+        flatten() %>%
+        unlist
+dist[maxes,]
 ```
 
 
