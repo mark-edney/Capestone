@@ -73,7 +73,7 @@ english <- read_lines("~/R/Capestone/data/diction.txt")
 english <- tibble("word" = english[!english==""])
 
 contract <- read_lines("~/R/Capestone/data/contractions.txt")
-contract <- tibble("word" = contract)
+contract <- tibble("word" = contract) %>% unnest_tokens(word,word)
 ```
 
 ## Vocabulary 
@@ -83,7 +83,6 @@ A vocabulary of words is created from the unique words with the applied filters.
 #clean up ram
 rm(blog,news,twitter)
 voc <- bind_rows(english, contract) %>% anti_join(prof)
-rm(contract, english, prof)
 
 unigram <- corpus %>% unnest_tokens(ngram, text, token = "ngrams", n = 1) %>%
         semi_join(voc, by = c("ngram"="word")) 
@@ -102,23 +101,11 @@ for the corpus, the quantity will be converted to "<unk>".
 unigramcount <- unigram %>% count(ngram)
 unk <- unigramcount %>%
         filter(n==1) %>%
-        slice_sample(prop = 0.005) 
-unigram[unigram$ngram %in% unk$ngram,]$ngram <- "<unk>"
+        slice_sample(n = mean(unigramcount$n)) 
+unigram[unigram$ngram %in% unk$ngram,]$ngram <- "unk"
 
 ```
 
-There are still many word that only appear once (`r sum(unigram$n==1)`) so it
-useful to remove these words as the add little to prediction value of the models
-but significantly to the time and memory requirement. This is mainly due to the 
-filtering. 
-
-```{r vocabclean}
-remove <- unigramcount %>%
-        filter(n==1)
-unigram <- unigram[!unigram$ngram %in% remove$ngram,]
-voc <- tibble(word = unique(unigram$ngram))
-
-```
 
 The Corpus can reconstructed with the reduced vocabulary remove the need to re-filter
 for the biagrams and trigrams
@@ -130,7 +117,19 @@ corpus <- unigram %>%
         mutate("line" = row_number())
 
 rm(unigramcount)        
-unigram <- unigram %>% count(ngram)
+```
+There are still many word that only appear once (`r sum(unigram$n==1)`) so it
+useful to remove these words as the add little to prediction value of the models
+but significantly to the time and memory requirement. This is mainly due to the 
+filtering. 
+
+```{r vocabclean}
+unigram <- unigram %>%
+        count(ngram) %>%
+        filter(n > quantile(n,0.4))
+
+voc <- tibble(word = unigram$ngram)
+
 ```
 ## Bigrams
 
@@ -139,9 +138,11 @@ by the vocabulary list.
 ```{r bigram}
 bigram <- corpus %>% 
         unnest_tokens(ngram, text, token = "ngrams", n = 2) %>%
-        separate(ngram, c("word1", "word2")) %>%
+        separate(ngram, c("word1", "word2"), sep = " ") %>%
         count(word1, word2) %>%
-        filter(!n==1)
+        filter(n > quantile(n,0.4)) %>%
+        na.omit()
+       
 ```
 
 ## Trigrams
@@ -150,9 +151,11 @@ Likewise, the trigrams are created in a similar manner
 ```{r trigrams}
 trigram <- corpus %>% 
         unnest_tokens(ngram, text, token = "ngrams", n = 3) %>%
-        separate(ngram, c("word1", "word2", "word3")) %>%
+        separate(ngram, c("word1", "word2", "word3"), sep = " ") %>%
         count(word1, word2, word3) %>%
-        filter(!n==1)
+        filter(n > quantile(n,0.4)) %>%
+        na.omit()
+rm(corpus)
 ```
 
 ## Testing
@@ -173,10 +176,9 @@ input <- tibble(text = c("When you breathe, I want to be the air for you. I'll b
         mutate(line = row_number()) %>%
         unnest_tokens(word, text)
 
-w <- filter(input, line==1) %>%
+w <- filter(input, line==2) %>%
         select(word) %>%
-        slice_tail(n=2) %>%
-        as.vector()
+        slice_tail(n=3) 
 w[!w$word %in% voc$word,] <- "<unk>"
 ```
 
@@ -206,7 +208,7 @@ Nr <- count(temp, n) %>% add_row(n = 0, nn = 0)  %>%
         arrange(n)
 Nr %<>% mutate(c= 0) %>% mutate(GT = 0)
 total <- sum(Nr$nn*Nr$n)
-Nr$GT[Nr$n==0] <- Nr$nn[Nr$n==1] / total
+Nr$GT[Nr$n==0] <- Nr$nn[Nr$n[2]] / total
 Nr$nn[Nr$n==0] <- nrow(dist) - total
 for (i in 2:nrow(Nr)) {
         Nr$c[i] <-  (Nr$n[i]+1)*Nr$nn[i+1]/Nr$nn[i]
@@ -221,7 +223,15 @@ GT$n[is.na(GT$n)] <- 0
 GT <- left_join(GT, select(Nr, n, GT))
 dist <- left_join(dist, select(GT, word, GT))
 ```
-
+### Katz Backoff
+```{r katz}
+kat <- temp
+#k is the minimum count to accept the trigram
+k <- 0
+#d is the trigram weight which is the adjucted good turing count divided by the 
+#actual count
+d <- Nr$c/Nr$n
+```
 ### Absolute Discounting
 ```{r AD}
 ADdf <- voc %>% left_join(select(temp, word3, n), by = c("word" = "word3")) 
@@ -248,10 +258,15 @@ maxes <- dist %>% filter(!word == "<unk>") %>%
         summarise_at(-1, which.max) %>%
         flatten() %>%
         unlist
-dist[maxes,]
+dist[maxes+1,]
 ```
 
-
-
-
+```{r Cross_entropy}
+cross <- function(dist, ans){
+        names <- colnames(dist)
+        ref <- 2:length(names)
+        cross <- summarise_all(-(dist[,1]==ans) * log(dist[ref]), sum)/nrow(dist)
+        cross
+}
+```
 
