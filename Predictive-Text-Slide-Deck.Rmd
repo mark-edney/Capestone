@@ -1,0 +1,120 @@
+---
+title: "Predictive Text Slide Deck"
+author: "Mark Edney"
+date: "22/05/2021"
+output: 
+        slidy_presentation:
+                font_adjustment: -1
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+mdl.perplex <- readRDS("mdl.perplex.rds")
+mdl.acc <- readRDS("mdl.acc.rds")
+library(tidyverse)
+```
+
+## Predictive Text Application
+
+The Predictive Text Application accepts text from the user and predicts the next
+word from five different models: the Maximum Likeliness Estimate, Add One, Good Turing 
+estimate, Absolute Discounting Interpolation and Kneser Ney Smoothing. These models perform automatic "Stupid Back-off" so the used n-gram is displayed on the side panel. The predictions are summarized in a table while the distributions
+for the models are displayed in column charts with the words summarized around their
+first character.
+
+![Appplication Sample](App_sample.PNG)
+
+
+## Corpus Prepossessing
+
+The corpus incorporates the following features:
+
+- 10% sample of the data files
+- Profanity filter
+- English dictionary filter
+- Contractions were included
+- Stored as a binary file (RDS file)
+```{r process, eval = FALSE, echo=TRUE, include=TRUE}
+blog <- read_lines("~/R/Capestone/data/final/en_US/en_US.blogs.txt")
+news <- read_lines("~/R/Capestone/data/final/en_US/en_US.news.txt")
+twitter <- read_lines("~/R/Capestone/data/final/en_US/en_US.twitter.txt")
+blog <- tibble(text = blog) 
+news <- tibble(text = news)
+twitter <- tibble(text = twitter)
+
+set.seed(90210)
+corpus <- bind_rows(blog,twitter,news) %>% 
+        slice_sample(prop = 0.10) %>%
+        mutate(line = row_number())
+```
+
+## N-grams
+
+A unigram Data Frame was created from the sampled Corpus file. These unigrams were
+filtered and than the corpus was reconstructed by the line numbers.
+```{r unigram, eval = FALSE, echo=TRUE, include=TRUE}
+voc <- bind_rows(english, contract) %>% anti_join(prof)
+
+unigram <- corpus %>% unnest_tokens(ngram, text, token = "ngrams", n = 1) %>%
+        semi_join(voc, by = c("ngram"="word")
+```
+N-grams of higher level are easily created. Due to the size on the n-grams, the 
+final n-grams were weighted to the lower levels. This was done with the quantile 
+function evaluating the n-gram counts. 
+```{r ngrams, eval = FALSE, echo=TRUE, include=TRUE}
+unigram <- readRDS("unigram10.rds") 
+bigram <- readRDS("bigram10.rds") 
+trigram <- readRDS("trigram10.rds") %>% filter(n>quantile(.$n, 0.5))
+tetragram <- readRDS("tetragram10.rds") %>% filter(n>quantile(.$n, 0.55))
+pentagram <- readRDS("pentagram10.rds") %>% filter(n>quantile(.$n, 0.6))
+hexagram <- readRDS("hexagram10.rds") %>% filter(n>quantile(.$n, 0.65)
+```
+
+## Extra features
+
+The model includes some additional features such as the ability to handle unknown
+words. This was achieved by changing a sample of the most infrequent words to "unk".
+When the user input includes a word not in the application vocabulary, it is changed 
+to "unk". 
+```{r OOV, eval = FALSE, echo=TRUE, include=TRUE}
+unk <- unigramcount %>%
+        filter(n==1) %>%
+        slice_sample(n = mean(unigramcount$n)) 
+unigram[unigram$ngram %in% unk$ngram,]$ngram <- "unk"
+```
+The application also includes code enabling the automatic "Stupid Back-off" in which
+the highest level off n-gram is used that is available. This value is based on the 
+order of n-grams available as well as the length of the input text. 
+```{r backoff, eval = FALSE, echo=TRUE, include=TRUE}
+n <- maxngram
+        for (i in 2:n){
+                if(i>5){ngrams.tbl[[i]] <- ngrams.tbl[[i]] %>%
+                                filter(.[,i-5] == text$word[nrow(text)-4])}
+                if(i>4){ngrams.tbl[[i]] <- ngrams.tbl[[i]] %>%
+                                filter(.[,i-4] == text$word[nrow(text)-3])}
+                if(i>3){ngrams.tbl[[i]] <- ngrams.tbl[[i]] %>%
+                                filter(.[,i-3] == text$word[nrow(text)-2])}
+                if(i>2){ngrams.tbl[[i]] <- ngrams.tbl[[i]] %>%
+                                filter(.[,i-2] == text$word[nrow(text)-1])}
+                ngrams.tbl[[i]] <- ngrams.tbl[[i]] %>%
+                        filter(.[,i-1] == text$word[nrow(text)]) %>%
+                                arrange(desc(n))}
+```
+
+## Model Performance
+
+The models were tested by measuring the Perplexity which is a measure of the predictive 
+power of a probability distribution. N represents the number of words.
+$$PP(W) = 2^{\frac{1}{N}\Sigma^N_{i=1}log(p_i) }$$
+Theses models were tested against testing sample of 500 lines not in the training
+sample where each following word was predicted. In total there were `r nrow(mdl.perplex)`
+test samples. 
+```{r testing, echo=TRUE, include = TRUE}
+mdl.perplex %>% colMeans
+mdl.acc %>% colMeans
+```
+The Maximum Likeliness Estimate produces an infinite perplexity due to words having
+0 probability of occurring. The accuracies of all the model appear to all be similar. 
+The perplexity of the Absolute Discounting and Kneser Ney are pretty low but they 
+can be optimized by changing the discounting rate. Interestingly enough the Add one
+model produces the smallest perplexity. 
