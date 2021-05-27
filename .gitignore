@@ -65,3 +65,5 @@ data/final/fi_FI/fi_FI.twitter.txt
 data/final/ru_RU/ru_RU.blogs.txt
 data/final/ru_RU/ru_RU.news.txt
 data/final/ru_RU/ru_RU.twitter.txt
+.RData
+.Rhistory
